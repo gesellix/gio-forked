@@ -6,8 +6,10 @@ import android.content.ClipboardManager;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PersistableBundle;
 
 import java.io.UnsupportedEncodingException;
 
@@ -58,9 +60,20 @@ public final class Gio {
 		ctx.stopService(new Intent(ctx, GioForegroundService.class));
 	}
 
-	static void writeClipboard(Context ctx, String s) {
+	// The key of ClipDescription.EXTRA_IS_SENSITIVE (API 33). Android 13 and
+	// later then hide the content in the clipboard preview, earlier versions
+	// ignore it.
+	private static final String EXTRA_IS_SENSITIVE = "android.content.extra.IS_SENSITIVE";
+
+	static void writeClipboard(Context ctx, String s, boolean sensitive) {
 		ClipboardManager m = (ClipboardManager)ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-		m.setPrimaryClip(ClipData.newPlainText(null, s));
+		ClipData clip = ClipData.newPlainText(null, s);
+		if (sensitive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+			PersistableBundle extras = new PersistableBundle();
+			extras.putBoolean(EXTRA_IS_SENSITIVE, true);
+			clip.getDescription().setExtras(extras);
+		}
+		m.setPrimaryClip(clip);
 	}
 
 	static String readClipboard(Context ctx) {

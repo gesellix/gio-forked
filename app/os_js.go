@@ -868,7 +868,7 @@ func (w *window) ReadClipboard() {
 	}
 }
 
-func (w *window) WriteClipboard(mime string, s []byte) {
+func (w *window) WriteClipboard(mime string, s []byte, sensitive bool) {
 	if w.clipboard.IsUndefined() {
 		return
 	}
