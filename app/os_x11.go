@@ -77,6 +77,8 @@ type x11Window struct {
 		clipboard C.Atom
 		// "PRIMARY".
 		primary C.Atom
+		// "x-kde-passwordManagerHint", offered for sensitive content.
+		passwordManagerHint C.Atom
 		// "CLIPBOARD_CONTENT", the clipboard destination property.
 		clipboardContent C.Atom
 		// "WM_DELETE_WINDOW"
@@ -108,7 +110,8 @@ type x11Window struct {
 	pointerBtns pointer.Buttons
 
 	clipboard struct {
-		content []byte
+		content   []byte
+		sensitive bool
 	}
 	cursor    pointer.Cursor
 	config    Config
@@ -161,8 +164,9 @@ func (w *x11Window) ReadClipboard() {
 	C.XConvertSelection(w.x, w.atoms.clipboard, w.atoms.utf8string, w.atoms.clipboardContent, w.xw, C.CurrentTime)
 }
 
-func (w *x11Window) WriteClipboard(mime string, s []byte) {
+func (w *x11Window) WriteClipboard(mime string, s []byte, sensitive bool) {
 	w.clipboard.content = s
+	w.clipboard.sensitive = sensitive
 	C.XSetSelectionOwner(w.x, w.atoms.clipboard, w.xw, C.CurrentTime)
 	C.XSetSelectionOwner(w.x, w.atoms.primary, w.xw, C.CurrentTime)
 }
@@ -785,16 +789,19 @@ func (h *x11EventHandler) handleEvents() bool {
 			case w.atoms.targets:
 				// The requestor wants the supported clipboard
 				// formats. First write the targets...
-				formats := [...]C.long{
+				formats := []C.long{
 					C.long(w.atoms.targets),
 					C.long(w.atoms.utf8string),
 					C.long(w.atoms.plaintext),
 					// GTK clients need this.
 					C.long(w.atoms.gtk_text_buffer_contents),
 				}
+				if w.clipboard.sensitive {
+					formats = append(formats, C.long(w.atoms.passwordManagerHint))
+				}
 				C.XChangeProperty(w.x, cevt.requestor, cevt.property, w.atoms.atom,
 					32 /* bitwidth of formats */, C.PropModeReplace,
-					(*C.uchar)(unsafe.Pointer(&formats)), C.int(len(formats)),
+					(*C.uchar)(unsafe.Pointer(unsafe.SliceData(formats))), C.int(len(formats)),
 				)
 				// ...then notify the requestor.
 				notify()
@@ -804,6 +811,16 @@ func (h *x11EventHandler) handleEvents() bool {
 				C.XChangeProperty(w.x, cevt.requestor, cevt.property, cevt.target,
 					8 /* bitwidth */, C.PropModeReplace,
 					ptr, C.int(len(content)),
+				)
+				notify()
+			case w.atoms.passwordManagerHint:
+				if !w.clipboard.sensitive {
+					break
+				}
+				hint := []byte(passwordManagerHintValue)
+				C.XChangeProperty(w.x, cevt.requestor, cevt.property, cevt.target,
+					8 /* bitwidth */, C.PropModeReplace,
+					(*C.uchar)(unsafe.Pointer(unsafe.SliceData(hint))), C.int(len(hint)),
 				)
 				notify()
 			}
@@ -926,6 +943,7 @@ func newX11Window(gioWin *callbacks, options []Option) error {
 	w.atoms.clipboardContent = w.atom("CLIPBOARD_CONTENT", false)
 	w.atoms.atom = w.atom("ATOM", false)
 	w.atoms.targets = w.atom("TARGETS", false)
+	w.atoms.passwordManagerHint = w.atom(passwordManagerHintType, false)
 	w.atoms.wmName = w.atom("_NET_WM_NAME", false)
 	w.atoms.wmState = w.atom("_NET_WM_STATE", false)
 	w.atoms.wmStateFullscreen = w.atom("_NET_WM_STATE_FULLSCREEN", false)
