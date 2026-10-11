@@ -191,8 +191,9 @@ type driver interface {
 	NewContext() (context, error)
 	// ReadClipboard requests the clipboard content.
 	ReadClipboard()
-	// WriteClipboard requests a clipboard write.
-	WriteClipboard(mime string, s []byte)
+	// WriteClipboard requests a clipboard write. Sensitive content is marked
+	// for clipboard managers where the platform supports it.
+	WriteClipboard(mime string, s []byte, sensitive bool)
 	// Configure the window.
 	Configure([]Option)
 	// SetCursor updates the current cursor to name.

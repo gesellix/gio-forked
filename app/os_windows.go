@@ -933,11 +933,24 @@ func (w *window) Configure(options []Option) {
 	windows.ShowWindow(w.hwnd, showMode)
 }
 
-func (w *window) WriteClipboard(mime string, s []byte) {
-	w.writeClipboard(string(s))
+func (w *window) WriteClipboard(mime string, s []byte, sensitive bool) {
+	w.writeClipboard(string(s), sensitive)
 }
 
-func (w *window) writeClipboard(s string) error {
+// sensitiveClipboardFormats are the registered clipboard formats that keep
+// sensitive content out of clipboard monitors, the clipboard history (Win+V)
+// and the cloud clipboard, with their DWORD values. The data of
+// ExcludeClipboardContentFromMonitorProcessing does not matter.
+var sensitiveClipboardFormats = [...]struct {
+	name  string
+	value uint32
+}{
+	{"ExcludeClipboardContentFromMonitorProcessing", 0},
+	{"CanIncludeInClipboardHistory", 0},
+	{"CanUploadToCloudClipboard", 0},
+}
+
+func (w *window) writeClipboard(s string, sensitive bool) error {
 	if err := windows.OpenClipboard(w.hwnd); err != nil {
 		return err
 	}
@@ -950,7 +963,29 @@ func (w *window) writeClipboard(s string) error {
 		return err
 	}
 	n := len(u16) * int(unsafe.Sizeof(u16[0]))
-	mem, err := windows.GlobalAlloc(n)
+	text := unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(u16))), n)
+	if err := setClipboardData(windows.CF_UNICODETEXT, text); err != nil {
+		return err
+	}
+	if !sensitive {
+		return nil
+	}
+	// A format that cannot be set leaves the text on the clipboard, only
+	// unmarked for that purpose.
+	for _, f := range sensitiveClipboardFormats {
+		format, err := windows.RegisterClipboardFormat(f.name)
+		if err != nil {
+			continue
+		}
+		v := f.value
+		setClipboardData(format, unsafe.Slice((*byte)(unsafe.Pointer(&v)), unsafe.Sizeof(v)))
+	}
+	return nil
+}
+
+// setClipboardData puts a copy of data on the open clipboard in format.
+func setClipboardData(format uint32, data []byte) error {
+	mem, err := windows.GlobalAlloc(len(data))
 	if err != nil {
 		return err
 	}
@@ -959,10 +994,9 @@ func (w *window) writeClipboard(s string) error {
 		windows.GlobalFree(mem)
 		return err
 	}
-	u16v := unsafe.Slice((*uint16)(ptr), len(u16))
-	copy(u16v, u16)
+	copy(unsafe.Slice((*byte)(ptr), len(data)), data)
 	windows.GlobalUnlock(mem)
-	if err := windows.SetClipboardData(windows.CF_UNICODETEXT, mem); err != nil {
+	if err := windows.SetClipboardData(format, mem); err != nil {
 		windows.GlobalFree(mem)
 		return err
 	}
