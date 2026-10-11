@@ -44,12 +44,23 @@ __attribute__ ((visibility ("hidden"))) CFTypeRef gio_createView(int presentWith
 __attribute__ ((visibility ("hidden"))) CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height);
 __attribute__ ((visibility ("hidden"))) void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle);
 
-static void writeClipboard(CFTypeRef str) {
+static void writeClipboard(CFTypeRef str, int sensitive) {
 	@autoreleasepool {
 		NSString *s = (__bridge NSString *)str;
 		NSPasteboard *p = NSPasteboard.generalPasteboard;
-		[p declareTypes:@[NSPasteboardTypeString] owner:nil];
+		if (!sensitive) {
+			[p declareTypes:@[NSPasteboardTypeString] owner:nil];
+			[p setString:s forType:NSPasteboardTypeString];
+			return;
+		}
+		// The marker types of the nspasteboard.org convention, with empty
+		// data, tell clipboard managers to keep no history of the content.
+		NSString *concealed = @"org.nspasteboard.ConcealedType";
+		NSString *transient = @"org.nspasteboard.TransientType";
+		[p declareTypes:@[NSPasteboardTypeString, concealed, transient] owner:nil];
 		[p setString:s forType:NSPasteboardTypeString];
+		[p setData:[NSData data] forType:concealed];
+		[p setData:[NSData data] forType:transient];
 	}
 }
 
@@ -410,10 +421,14 @@ func (w *window) ReadClipboard() {
 	})
 }
 
-func (w *window) WriteClipboard(mime string, s []byte) {
+func (w *window) WriteClipboard(mime string, s []byte, sensitive bool) {
 	cstr := stringToNSString(string(s))
 	defer C.CFRelease(cstr)
-	C.writeClipboard(cstr)
+	var sens C.int
+	if sensitive {
+		sens = 1
+	}
+	C.writeClipboard(cstr, sens)
 }
 
 func (w *window) updateWindowMode() {

@@ -139,6 +139,8 @@ type wlSeat struct {
 	source *C.struct_wl_data_source
 	// content is the data belonging to source.
 	content []byte
+	// sensitive is whether content is marked as sensitive.
+	sensitive bool
 }
 
 type repeatState struct {
@@ -287,7 +289,7 @@ func newWLWindow(callbacks *callbacks, options []Option) error {
 	return nil
 }
 
-func (d *wlDisplay) writeClipboard(content []byte) error {
+func (d *wlDisplay) writeClipboard(content []byte, sensitive bool) error {
 	s := d.seat
 	if s == nil {
 		return nil
@@ -297,15 +299,22 @@ func (d *wlDisplay) writeClipboard(content []byte) error {
 		C.wl_data_source_destroy(s.source)
 		s.source = nil
 		s.content = nil
+		s.sensitive = false
 	}
 	if d.dataDeviceManager == nil || s.dataDev == nil {
 		return nil
 	}
 	s.content = content
+	s.sensitive = sensitive
 	s.source = C.wl_data_device_manager_create_data_source(d.dataDeviceManager)
 	C.wl_data_source_add_listener(s.source, &C.gio_data_source_listener, unsafe.Pointer(s.seat))
 	for _, mime := range clipboardMimeTypes {
 		C.wl_data_source_offer(s.source, C.CString(mime))
+	}
+	if sensitive {
+		hint := C.CString(passwordManagerHintType)
+		C.wl_data_source_offer(s.source, hint)
+		C.free(unsafe.Pointer(hint))
 	}
 	C.wl_data_device_set_selection(s.dataDev, s.source, s.serial)
 	return nil
@@ -1077,8 +1086,8 @@ func (w *window) ReadClipboard() {
 	}()
 }
 
-func (w *window) WriteClipboard(mime string, s []byte) {
-	w.disp.writeClipboard(s)
+func (w *window) WriteClipboard(mime string, s []byte, sensitive bool) {
+	w.disp.writeClipboard(s, sensitive)
 }
 
 func (w *window) Configure(options []Option) {
@@ -1793,6 +1802,14 @@ func gio_onDataSourceTarget(data unsafe.Pointer, source *C.struct_wl_data_source
 func gio_onDataSourceSend(data unsafe.Pointer, source *C.struct_wl_data_source, mime *C.char, fd C.int32_t) {
 	s := callbackLoad(data).(*wlSeat)
 	content := s.content
+	if C.GoString(mime) == passwordManagerHintType {
+		// The hint is all a clipboard manager asking for it gets, never the
+		// content.
+		content = nil
+		if s.sensitive {
+			content = []byte(passwordManagerHintValue)
+		}
+	}
 	go func() {
 		defer syscall.Close(int(fd))
 		syscall.Write(int(fd), content)
@@ -1804,6 +1821,7 @@ func gio_onDataSourceCancelled(data unsafe.Pointer, source *C.struct_wl_data_sou
 	s := callbackLoad(data).(*wlSeat)
 	if s.source == source {
 		s.content = nil
+		s.sensitive = false
 		s.source = nil
 	}
 	C.wl_data_source_destroy(source)
