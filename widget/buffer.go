@@ -67,6 +67,8 @@ func (e *editBuffer) moveGap(caret, space int) {
 			copy(txt[e.gapstart+gaplen:], e.text[e.gapend:])
 			copy(txt[caret+gaplen:], e.text[caret:e.gapstart])
 		}
+		// Zero the old storage, so that no copy stays behind.
+		clear(e.text)
 		e.text = txt
 		e.gapstart = caret
 		e.gapend = e.gapstart + gaplen
@@ -80,6 +82,14 @@ func (e *editBuffer) moveGap(caret, space int) {
 		e.gapstart = caret
 		e.gapend = e.gapstart + l
 	}
+}
+
+// wipe empties the buffer and zeros its storage, including the gap.
+func (e *editBuffer) wipe() {
+	e.changed = e.changed || e.Size() > 0
+	clear(e.text)
+	e.gapstart = 0
+	e.gapend = len(e.text)
 }
 
 func (e *editBuffer) Size() int64 {

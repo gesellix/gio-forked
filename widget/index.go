@@ -480,8 +480,21 @@ type graphemeReader struct {
 func (p *graphemeReader) SetSource(source io.ReaderAt) {
 	p.source = source
 	p.cursor = 0
-	p.reader = bufio.NewReader(p)
+	if p.reader == nil {
+		p.reader = bufio.NewReader(p)
+	} else {
+		p.reader.Reset(p)
+	}
 	p.runeOffset = 0
+}
+
+// wipe zeros the copies of the source text in the reader and its segmenter.
+func (p *graphemeReader) wipe() {
+	wipeBufioReader(p.reader)
+	clear(p.paragraph[:cap(p.paragraph)])
+	// Zero the segmenter's copy of the last paragraph, which is
+	// never longer than cap(p.paragraph).
+	p.Segmenter.Init(p.paragraph[:cap(p.paragraph)])
 }
 
 // Read exists to satisfy io.Reader. It should not be directly invoked.
