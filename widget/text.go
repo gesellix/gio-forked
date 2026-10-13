@@ -571,6 +571,39 @@ func (e *textView) runeOffset(r int) int {
 	return entry.bytes
 }
 
+// wipe overwrites the copies of the source text held by the text view, such
+// as read buffers and the glyph index, with zeros. It does not touch the
+// source itself.
+func (e *textView) wipe() {
+	wipeBufioReader(e.maskReader.rr)
+	e.paragraphReader.wipe()
+	clear(e.index.glyphs[:cap(e.index.glyphs)])
+	e.index.reset()
+	e.graphemes = e.graphemes[:0]
+	e.seekCursor = 0
+	e.invalidate()
+}
+
+// wipeBufioReader overwrites the internal buffer of r with zeros and
+// detaches r from its source. r may be nil.
+func wipeBufioReader(r *bufio.Reader) {
+	if r == nil {
+		return
+	}
+	r.Reset(zeroReader{})
+	// Fill the entire buffer from zeroReader.
+	_, _ = r.Peek(r.Size())
+	r.Reset(nil)
+}
+
+// zeroReader is an endless source of zero bytes.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
 func (e *textView) invalidate() {
 	e.offIndex = e.offIndex[:0]
 	e.valid = false

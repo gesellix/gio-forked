@@ -121,8 +121,9 @@ type imeState struct {
 }
 
 type maskReader struct {
-	// rr is the underlying reader.
-	rr      io.RuneReader
+	// rr buffers the underlying reader. It is reused across
+	// Reset calls, so that Wipe can reach the copied text.
+	rr      *bufio.Reader
 	maskBuf [utf8.UTFMax]byte
 	// mask is the utf-8 encoded mask rune.
 	mask []byte
@@ -138,7 +139,11 @@ const (
 )
 
 func (m *maskReader) Reset(r io.Reader, mr rune) {
-	m.rr = bufio.NewReader(r)
+	if m.rr == nil {
+		m.rr = bufio.NewReader(r)
+	} else {
+		m.rr.Reset(r)
+	}
 	n := utf8.EncodeRune(m.maskBuf[:], mr)
 	m.mask = m.maskBuf[:n]
 }
@@ -883,6 +888,47 @@ func (e *Editor) SetText(s string) {
 	}
 	e.replace(0, e.text.Len(), s, true)
 	// Reset xoff and move the caret to the beginning.
+	e.SetCaret(0, 0)
+}
+
+// Wipe empties the editor like SetText(""), and in addition overwrites the
+// copies of the contents that the editor keeps in its own byte and rune
+// buffers with zeros: the text buffer, the scratch buffers used by Text,
+// SelectedText and the input method snippet, and the read buffers and
+// indexes used for layout. It also clears the undo history and discards
+// pending events not yet returned by Update, because both may refer to the
+// contents. The editor remains usable afterwards.
+//
+// Wipe is meant for sensitive contents such as passwords, and is a best
+// effort. It cannot reach copies outside the editor's buffers, notably:
+//
+//   - strings, which are immutable in Go: the results of Text and
+//     SelectedText, SubmitEvent.Text, the text of key.EditEvent and
+//     transfer events delivered to the editor, the strings passed to
+//     SetText and Insert, and the snippet strings handed to the platform
+//     input method;
+//   - buffers that were replaced by larger ones as the contents grew, and
+//     are waiting to be garbage collected;
+//   - the shaper's caches and the operations of past frames. Set Mask to
+//     keep the contents away from the shaper: it then only sees the mask.
+//
+// An active input method composition is not cancelled.
+func (e *Editor) Wipe() {
+	e.initBuffer()
+	e.buffer.wipe()
+	e.text.wipe()
+	clear(e.scratch[:cap(e.scratch)])
+	e.scratch = e.scratch[:0]
+	clear(e.ime.scratch[:cap(e.ime.scratch)])
+	e.ime.start, e.ime.end = 0, 0
+	// Make the next Update replace the input method's snippet with the
+	// empty one, dropping its reference to the old contents.
+	e.ime.snippet = key.Snippet{Range: key.Range{Start: -1, End: -1}}
+	clear(e.history[:cap(e.history)])
+	e.history = e.history[:0]
+	e.nextHistoryIdx = 0
+	clear(e.pending[:cap(e.pending)])
+	e.pending = e.pending[:0]
 	e.SetCaret(0, 0)
 }
 
