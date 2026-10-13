@@ -530,12 +530,18 @@ func Java_org_gioui_GioView_onStopView(env *C.JNIEnv, class C.jclass, handle C.j
 	w := cgo.Handle(handle).Value().(*window)
 	w.started = false
 	w.visible = false
+	w.config.Hidden = true
+	w.processEvent(ConfigEvent{Config: w.config})
 }
 
 //export Java_org_gioui_GioView_onStartView
 func Java_org_gioui_GioView_onStartView(env *C.JNIEnv, class C.jclass, handle C.jlong) {
 	w := cgo.Handle(handle).Value().(*window)
 	w.started = true
+	if w.config.Hidden {
+		w.config.Hidden = false
+		w.processEvent(ConfigEvent{Config: w.config})
+	}
 	if w.win != nil {
 		w.setVisible(env)
 	}
