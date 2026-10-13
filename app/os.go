@@ -49,6 +49,19 @@ type Config struct {
 	TopMost bool
 	// Focused reports whether the window is focused.
 	Focused bool
+	// Hidden reports whether the window is in the background, out of
+	// the user's sight, for example because the user switched to another
+	// app or turned the screen off. A window can lose the focus without
+	// being hidden, such as when a system dialog or the iOS Control
+	// Center covers it.
+	//
+	// Hidden is reported on Android (Activity.onStop and onStart) and
+	// iOS (the app did enter the background and will enter the
+	// foreground). The ConfigEvent that reports a change of Hidden is
+	// delivered before the native callback returns, so a program that
+	// handles it in its event loop does so before the system may
+	// suspend the process.
+	Hidden bool
 	// decoHeight is the height of the fallback decoration for platforms such
 	// as Wayland that may need fallback client-side decorations.
 	decoHeight unit.Dp
