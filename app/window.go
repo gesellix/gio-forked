@@ -679,6 +679,7 @@ func (w *Window) processEvent(e event.Event) bool {
 	case ConfigEvent:
 		w.decorations.Decorations.Maximized = e2.Config.Mode == Maximized
 		wasFocused := w.decorations.Config.Focused
+		wasHidden := w.decorations.Config.Hidden
 		w.decorations.Config = e2.Config
 		e2.Config = w.effectiveConfig()
 		w.coalesced.cfg = &e2
@@ -693,7 +694,9 @@ func (w *Window) processEvent(e event.Event) bool {
 			w.setNextFrame(t)
 			w.updateAnimation()
 		}
-		return handled
+		// A change of Hidden is always delivered right away: the program
+		// may need it before the system suspends the process.
+		return handled || w.decorations.Config.Hidden != wasHidden
 	case event.Event:
 		focusDir := key.FocusDirection(-1)
 		if e, ok := e2.(key.Event); ok && e.State == key.Press {
