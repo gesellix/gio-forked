@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 	"testing/quick"
 	"time"
@@ -1371,4 +1372,236 @@ func textWidth(e *Editor, lineNum, colStart, colEnd int) float32 {
 func textBaseline(e *Editor, lineNum int) float32 {
 	start := e.text.closestToLineCol(lineNum, 0)
 	return float32(start.y)
+}
+
+// TestEditorWipe ensures that Wipe leaves no copies of the contents in the
+// memory reachable from the editor, and that the editor remains usable.
+func TestEditorWipe(t *testing.T) {
+	const secret = "s3cret-Pässwörd"
+	for _, mask := range []rune{0, '•'} {
+		t.Run(fmt.Sprintf("mask=%q", mask), func(t *testing.T) {
+			e := &Editor{Mask: mask, SingleLine: true, Submit: true}
+			r := new(input.Router)
+			gtx := layout.Context{
+				Ops:         new(op.Ops),
+				Constraints: layout.Exact(image.Pt(500, 100)),
+				Source:      r.Source(),
+				Locale:      english,
+			}
+			shaper := text.NewShaper(text.NoSystemFonts(), text.WithCollection(gofont.Collection()))
+			frame := func() {
+				gtx.Ops.Reset()
+				e.Layout(gtx, shaper, font.Font{}, unit.Sp(10), op.CallOp{}, op.CallOp{})
+				r.Frame(gtx.Ops)
+			}
+			gtx.Execute(key.FocusCmd{Tag: e})
+			frame()
+			// Type the secret rune by rune to grow the buffers, and correct
+			// a typo to populate the undo history with deleted text.
+			n := 0
+			for _, c := range secret {
+				r.Queue(key.EditEvent{Range: key.Range{Start: n, End: n}, Text: string(c)})
+				n++
+				frame()
+			}
+			e.SetCaret(n, n)
+			r.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Press})
+			frame()
+			if got := e.Len(); got != n-1 {
+				t.Fatalf("Len after delete: got %d, want %d", got, n-1)
+			}
+			last, _ := utf8.DecodeLastRuneInString(secret)
+			r.Queue(key.EditEvent{Range: key.Range{Start: n - 1, End: n - 1}, Text: string(last)})
+			frame()
+			// Let the input method read the contents, and submit them.
+			r.Queue(key.SnippetEvent{Start: 0, End: n})
+			frame()
+			if got := r.EditorState().Snippet.Text; got != secret {
+				t.Fatalf("snippet before Wipe: got %q, want %q", got, secret)
+			}
+			e.SetCaret(0, n)
+			if got := e.SelectedText(); got != secret {
+				t.Fatalf("SelectedText: got %q, want %q", got, secret)
+			}
+			r.Queue(key.Event{Name: key.NameReturn, State: key.Press})
+			submitted := false
+			for {
+				ev, ok := e.Update(gtx)
+				if !ok {
+					break
+				}
+				if s, ok := ev.(SubmitEvent); ok && s.Text == secret {
+					submitted = true
+				}
+			}
+			if !submitted {
+				t.Fatal("no SubmitEvent with the secret")
+			}
+			// Replacing the contents records them in the undo history.
+			e.SetText(secret)
+			frame()
+			if got := e.Text(); got != secret {
+				t.Fatalf("Text: got %q, want %q", got, secret)
+			}
+			// Verify that the search below can find the secret at all.
+			paths := findSecret(e, secret)
+			if len(paths) == 0 {
+				t.Fatal("secret not found in the editor before Wipe")
+			}
+			t.Logf("copies before Wipe: %v", paths)
+
+			e.Wipe()
+			if paths := findSecret(e, secret); len(paths) > 0 {
+				t.Errorf("secret found after Wipe in %v", paths)
+			}
+			if got := e.Len(); got != 0 {
+				t.Errorf("Len after Wipe: got %d, want 0", got)
+			}
+			if start, end := e.Selection(); start != 0 || end != 0 {
+				t.Errorf("selection after Wipe: got (%d, %d), want (0, 0)", start, end)
+			}
+			// The next frame must replace the input method's snippet.
+			r.Queue(key.SnippetEvent{Start: 0, End: n})
+			frame()
+			if got := r.EditorState().Snippet.Text; got != "" {
+				t.Errorf("snippet after Wipe: got %q, want empty", got)
+			}
+			if paths := findSecret(e, secret); len(paths) > 0 {
+				t.Errorf("secret found after Wipe and layout in %v", paths)
+			}
+
+			// The editor must remain usable, without an undo history from
+			// before the Wipe.
+			r.Queue(key.EditEvent{Text: "abc"})
+			frame()
+			if got := e.Text(); got != "abc" {
+				t.Errorf("Text after typing: got %q, want %q", got, "abc")
+			}
+			for range 2 {
+				r.Queue(key.Event{Name: "Z", Modifiers: key.ModShortcut, State: key.Press})
+				frame()
+			}
+			if got := e.Text(); got != "" {
+				t.Errorf("Text after undo: got %q, want empty", got)
+			}
+		})
+	}
+}
+
+// TestEditorWipeEmpty ensures that wiping an unused editor works and
+// reports no change.
+func TestEditorWipeEmpty(t *testing.T) {
+	e := new(Editor)
+	e.Wipe()
+	if e.Len() != 0 || e.Text() != "" {
+		t.Errorf("unused editor not empty after Wipe")
+	}
+	if e.text.Changed() {
+		t.Errorf("Wipe of an empty editor reported a change")
+	}
+	e.SetText("x")
+	e.text.Changed()
+	e.Wipe()
+	if !e.text.Changed() {
+		t.Errorf("Wipe of a non-empty editor reported no change")
+	}
+}
+
+// TestEditBufferGrowthClearsOldStorage ensures that growing the gap buffer
+// overwrites the storage it replaces.
+func TestEditBufferGrowthClearsOldStorage(t *testing.T) {
+	b := new(editBuffer)
+	b.prepend(0, "secret")
+	old := b.text
+	b.prepend(int(b.Size()), strings.Repeat("x", 2*cap(old)))
+	if &old[0] == &b.text[0] {
+		t.Fatal("buffer did not grow")
+	}
+	if !bytes.Equal(old, make([]byte, len(old))) {
+		t.Errorf("old storage not cleared: %q", old)
+	}
+}
+
+// findSecret walks the memory reachable from v and returns the paths to
+// byte slices, rune slices and strings that contain secret. Slices are
+// inspected up to their capacity. The shared text.Shaper is skipped: its
+// caches are documented to be out of reach of Wipe.
+func findSecret(v any, secret string) []string {
+	f := secretFinder{
+		secret:  secret,
+		visited: make(map[uintptr]bool),
+	}
+	f.walk(reflect.ValueOf(v), "editor")
+	return f.found
+}
+
+type secretFinder struct {
+	secret  string
+	visited map[uintptr]bool
+	found   []string
+}
+
+var (
+	shaperType = reflect.TypeFor[text.Shaper]()
+	byteType   = reflect.TypeFor[byte]()
+	runeType   = reflect.TypeFor[rune]()
+)
+
+func (f *secretFinder) walk(v reflect.Value, path string) {
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() || v.Type().Elem() == shaperType || f.visited[v.Pointer()] {
+			return
+		}
+		f.visited[v.Pointer()] = true
+		f.walk(v.Elem(), path)
+	case reflect.Interface:
+		if !v.IsNil() {
+			f.walk(v.Elem(), path)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			f.walk(v.Field(i), path+"."+v.Type().Field(i).Name)
+		}
+	case reflect.String:
+		f.check(v.String(), path)
+	case reflect.Slice:
+		if v.IsNil() {
+			return
+		}
+		full := v.Slice(0, v.Cap())
+		switch v.Type().Elem() {
+		case byteType:
+			b := make([]byte, full.Len())
+			for i := range b {
+				b[i] = byte(full.Index(i).Uint())
+			}
+			f.check(string(b), path)
+		case runeType:
+			rs := make([]rune, full.Len())
+			for i := range rs {
+				rs[i] = rune(full.Index(i).Int())
+			}
+			f.check(string(rs), path)
+		default:
+			for i := range full.Len() {
+				f.walk(full.Index(i), fmt.Sprintf("%s[%d]", path, i))
+			}
+		}
+	case reflect.Array:
+		for i := range v.Len() {
+			f.walk(v.Index(i), fmt.Sprintf("%s[%d]", path, i))
+		}
+	case reflect.Map:
+		for it := v.MapRange(); it.Next(); {
+			f.walk(it.Key(), path+"[key]")
+			f.walk(it.Value(), path+"[value]")
+		}
+	}
+}
+
+func (f *secretFinder) check(s, path string) {
+	if strings.Contains(s, f.secret) {
+		f.found = append(f.found, path)
+	}
 }
