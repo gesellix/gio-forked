@@ -121,8 +121,9 @@ type imeState struct {
 }
 
 type maskReader struct {
-	// rr is the underlying reader.
-	rr      io.RuneReader
+	// rr buffers the underlying reader. It is reused, so that layouts
+	// leave no copies of the text to the garbage collector.
+	rr      *bufio.Reader
 	maskBuf [utf8.UTFMax]byte
 	// mask is the utf-8 encoded mask rune.
 	mask []byte
@@ -138,7 +139,11 @@ const (
 )
 
 func (m *maskReader) Reset(r io.Reader, mr rune) {
-	m.rr = bufio.NewReader(r)
+	if m.rr == nil {
+		m.rr = bufio.NewReader(r)
+	} else {
+		m.rr.Reset(r)
+	}
 	n := utf8.EncodeRune(m.maskBuf[:], mr)
 	m.mask = m.maskBuf[:n]
 }
@@ -883,6 +888,30 @@ func (e *Editor) SetText(s string) {
 	}
 	e.replace(0, e.text.Len(), s, true)
 	// Reset xoff and move the caret to the beginning.
+	e.SetCaret(0, 0)
+}
+
+// Wipe empties the editor like SetText(""), and zeros the copies of the
+// contents in the editor's buffers. It also clears the undo history and the
+// event queue, which can refer to the contents. The editor remains usable.
+//
+// Wipe is a best effort for sensitive contents such as passwords. It cannot
+// reach strings, such as the results of Text and SubmitEvent.Text, buffers
+// that grew and wait for the garbage collector, or the shaper's caches. With
+// Mask set, the shaper only sees the mask.
+func (e *Editor) Wipe() {
+	e.initBuffer()
+	e.buffer.wipe()
+	e.text.wipe()
+	clear(e.scratch[:cap(e.scratch)])
+	clear(e.ime.scratch[:cap(e.ime.scratch)])
+	// Differ from any real snippet, so that the next Update sends one.
+	e.ime.snippet = key.Snippet{Range: key.Range{Start: -1, End: -1}}
+	clear(e.history[:cap(e.history)])
+	e.history = e.history[:0]
+	e.nextHistoryIdx = 0
+	clear(e.pending[:cap(e.pending)])
+	e.pending = e.pending[:0]
 	e.SetCaret(0, 0)
 }
 

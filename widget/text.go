@@ -571,6 +571,32 @@ func (e *textView) runeOffset(r int) int {
 	return entry.bytes
 }
 
+// wipe zeros the copies of the source text made for layout.
+func (e *textView) wipe() {
+	wipeBufioReader(e.maskReader.rr)
+	e.paragraphReader.wipe()
+	clear(e.index.glyphs[:cap(e.index.glyphs)])
+	e.invalidate()
+}
+
+// wipeBufioReader zeros the buffer of r.
+func wipeBufioReader(r *bufio.Reader) {
+	if r == nil {
+		return
+	}
+	r.Reset(zeroReader{})
+	// Peek fills the whole buffer from zeroReader.
+	_, _ = r.Peek(r.Size())
+}
+
+// zeroReader is an endless source of zero bytes.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
 func (e *textView) invalidate() {
 	e.offIndex = e.offIndex[:0]
 	e.valid = false
