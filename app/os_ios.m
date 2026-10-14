@@ -315,18 +315,80 @@ void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle) {
 	v.handle = handle;
 }
 
+// usesScenes reports whether the app opts in to the scene life cycle
+// with a UIApplicationSceneManifest in its Info.plist. UIKit then
+// connects a scene after launch, and _gioSceneDelegate creates the
+// window instead of the app delegate.
+static BOOL usesScenes(void) {
+	if (@available(iOS 13.0, tvOS 13.0, *)) {
+		return [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIApplicationSceneManifest"] != nil;
+	}
+	return NO;
+}
+
+// sceneWindow is the window of the scene life cycle. It outlives a
+// scene that UIKit disconnects, because there is only one Gio window
+// and its GioViewController cannot be created a second time.
+static UIWindow *sceneWindow;
+
+API_AVAILABLE(ios(13.0), tvos(13.0))
+@interface _gioSceneDelegate : UIResponder <UIWindowSceneDelegate>
+@property (strong, nonatomic) UIWindow *window;
+@end
+
+@implementation _gioSceneDelegate
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+	if (![scene isKindOfClass:[UIWindowScene class]] || ![session.role isEqualToString:UIWindowSceneSessionRoleApplication]) {
+		return;
+	}
+	UIWindowScene *windowScene = (UIWindowScene *)scene;
+	if (sceneWindow == nil) {
+		sceneWindow = [[UIWindow alloc] initWithWindowScene:windowScene];
+		GioViewController *controller = [[GioViewController alloc] initWithNibName:nil bundle:nil];
+		sceneWindow.rootViewController = controller;
+	} else {
+		sceneWindow.windowScene = windowScene;
+	}
+	self.window = sceneWindow;
+	[self.window makeKeyAndVisible];
+	[self scene:scene openURLContexts:connectionOptions.URLContexts];
+}
+
+- (void)scene:(UIScene *)scene openURLContexts:(NSSet<UIOpenURLContext *> *)URLContexts {
+	for (UIOpenURLContext *context in URLContexts) {
+		gio_onOpenURI((__bridge CFTypeRef)context.URL.absoluteString);
+	}
+}
+@end
+
 @interface _gioAppDelegate : UIResponder <UIApplicationDelegate>
 @property (strong, nonatomic) UIWindow *window;
 @end
 
 @implementation _gioAppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+	if (usesScenes()) {
+		return YES;
+	}
 	self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
 	GioViewController *controller = [[GioViewController alloc] initWithNibName:nil bundle:nil];
 	self.window.rootViewController = controller;
 	[self.window makeKeyAndVisible];
 	return YES;
 }
+
+// The scene manifest needs no scene configurations: the main scene
+// gets _gioSceneDelegate unless the Info.plist configures a delegate
+// for it. Without a manifest the app delegate created the window, and
+// the scene gets no delegate that would create a second one.
+- (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options API_AVAILABLE(ios(13.0), tvos(13.0)) {
+	UISceneConfiguration *config = [connectingSceneSession.configuration copy];
+	if (usesScenes() && config.delegateClass == nil && [connectingSceneSession.role isEqualToString:UIWindowSceneSessionRoleApplication]) {
+		config.delegateClass = [_gioSceneDelegate class];
+	}
+	return config;
+}
+
 - (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey, id> *)options {
     gio_onOpenURI((__bridge CFTypeRef)url.absoluteString);
 	return YES;
