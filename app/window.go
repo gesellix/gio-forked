@@ -73,6 +73,8 @@ type Window struct {
 		Config
 		height        unit.Dp
 		currentHeight int
+		// colors are the colors set by the DecorationColors option.
+		colors decorationColors
 		*material.Theme
 		*widget.Decorations
 	}
@@ -317,6 +319,9 @@ func (w *Window) Option(opts ...Option) {
 			opt(w.metric, &cnf)
 		}
 		w.decorations.enabled = cnf.Decorated
+		if cnf.decoColors != nil {
+			w.decorations.colors = *cnf.decoColors
+		}
 		decoHeight := w.decorations.height
 		if !w.decorations.enabled {
 			decoHeight = 0
@@ -785,6 +790,9 @@ func (w *Window) init() {
 	w.decorations.Theme = theme
 	w.decorations.Decorations = deco
 	w.decorations.enabled = cnf.Decorated
+	if cnf.decoColors != nil {
+		w.decorations.colors = *cnf.decoColors
+	}
 	w.decorations.height = decoHeight
 	w.imeState.compose = key.Range{Start: -1, End: -1}
 	w.semantic.ids = make(map[input.SemanticID]input.SemanticNode)
@@ -815,7 +823,7 @@ func (w *Window) decorate(e FrameEvent, o *op.Ops) image.Point {
 	deco := w.decorations.Decorations
 	allActions := system.ActionMinimize | system.ActionMaximize | system.ActionUnmaximize |
 		system.ActionClose | system.ActionMove
-	style := material.Decorations(w.decorations.Theme, deco, allActions, w.decorations.Config.Title)
+	style := w.decorations.colors.apply(material.Decorations(w.decorations.Theme, deco, allActions, w.decorations.Config.Title))
 	// Update the decorations based on the current window mode.
 	var actions system.Action
 	switch m := w.decorations.Config.Mode; m {
@@ -961,6 +969,27 @@ func StatusColor(color color.NRGBA) Option {
 	return func(_ unit.Metric, cnf *Config) {
 		cnf.StatusColor = color
 	}
+}
+
+// DecorationColors sets the background and foreground colors of the window
+// decorations Gio draws itself, on platforms whose window manager may provide
+// none, such as Wayland. A zero color keeps the default.
+func DecorationColors(bg, fg color.NRGBA) Option {
+	return func(_ unit.Metric, cnf *Config) {
+		cnf.decoColors = &decorationColors{bg: bg, fg: fg}
+	}
+}
+
+// apply sets the colors that are not zero on style.
+func (c decorationColors) apply(style material.DecorationsStyle) material.DecorationsStyle {
+	if c.bg != (color.NRGBA{}) {
+		style.Background = c.bg
+	}
+	if c.fg != (color.NRGBA{}) {
+		style.Foreground = c.fg
+		style.Title.Color = c.fg
+	}
+	return style
 }
 
 // NavigationColor sets the color of the navigation bar on Android, or the address bar in browsers.

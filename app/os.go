@@ -52,11 +52,20 @@ type Config struct {
 	// decoHeight is the height of the fallback decoration for platforms such
 	// as Wayland that may need fallback client-side decorations.
 	decoHeight unit.Dp
+	// decoColors are the colors of the fallback decoration, nil to leave
+	// them unchanged. See DecorationColors.
+	decoColors *decorationColors
 }
 
 // ConfigEvent is sent whenever the configuration of a Window changes.
 type ConfigEvent struct {
 	Config Config
+}
+
+// decorationColors are the colors of the fallback decoration. A zero color
+// keeps the one of the default theme.
+type decorationColors struct {
+	bg, fg color.NRGBA
 }
 
 func (c *Config) apply(m unit.Metric, options []Option) {
