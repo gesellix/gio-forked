@@ -192,12 +192,18 @@ func (w *window) draw(sync bool) {
 //export onStop
 func onStop(h C.uintptr_t) {
 	w := viewFor(h)
+	if !w.hidden {
+		processGlobalEvent(BackgroundEvent{})
+	}
 	w.hidden = true
 }
 
 //export onStart
 func onStart(h C.uintptr_t) {
 	w := viewFor(h)
+	if w.hidden {
+		processGlobalEvent(ForegroundEvent{})
+	}
 	w.hidden = false
 	w.draw(true)
 }
