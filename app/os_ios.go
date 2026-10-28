@@ -109,7 +109,6 @@ type window struct {
 	displayLink *displayLink
 	loop        *eventLoop
 
-	hidden bool
 	cursor pointer.Cursor
 	config Config
 
@@ -117,6 +116,10 @@ type window struct {
 }
 
 var mainWindow = newWindowRendezvous()
+
+// hidden reports whether the program is in the background. It is only
+// accessed on the main thread.
+var hidden bool
 
 func init() {
 	// Darwin requires UI operations happen on the main thread only.
@@ -157,7 +160,7 @@ func gio_onDraw(h C.uintptr_t) {
 }
 
 func (w *window) draw(sync bool) {
-	if w.hidden {
+	if hidden {
 		return
 	}
 	params := C.viewDrawParams(w.view)
@@ -189,17 +192,20 @@ func (w *window) draw(sync bool) {
 	})
 }
 
-//export onStop
-func onStop(h C.uintptr_t) {
-	w := viewFor(h)
-	w.hidden = true
+//export onEnterBackground
+func onEnterBackground() {
+	if !hidden {
+		processGlobalEvent(BackgroundEvent{})
+	}
+	hidden = true
 }
 
-//export onStart
-func onStart(h C.uintptr_t) {
-	w := viewFor(h)
-	w.hidden = false
-	w.draw(true)
+//export onEnterForeground
+func onEnterForeground() {
+	if hidden {
+		processGlobalEvent(ForegroundEvent{})
+	}
+	hidden = false
 }
 
 //export onDestroy
