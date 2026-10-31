@@ -296,10 +296,14 @@ func (w *Window) updateState() {
 // Invalidate is safe for concurrent use.
 func (w *Window) Invalidate() {
 	w.invMu.Lock()
-	defer w.invMu.Unlock()
-	if w.mayInvalidate {
-		w.mayInvalidate = false
-		w.driver.Invalidate()
+	may, d := w.mayInvalidate, w.driver
+	w.mayInvalidate = false
+	w.invMu.Unlock()
+	// Call the driver without invMu: on macOS and iOS, Invalidate from the
+	// main thread delivers the pending events before it returns, and
+	// nextEvent takes invMu.
+	if may {
+		d.Invalidate()
 	}
 }
 
