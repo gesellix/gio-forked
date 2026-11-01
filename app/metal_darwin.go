@@ -19,6 +19,8 @@ import (
 
 #include <CoreFoundation/CoreFoundation.h>
 
+extern void gio_diagTrace(char *s);
+
 static CFTypeRef createMetalDevice(void) {
 	@autoreleasepool {
 		id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
@@ -57,6 +59,12 @@ static void presentDrawable(CFTypeRef queueRef, CFTypeRef drawableRef) {
 		id<MTLDrawable> drawable = (__bridge id<MTLDrawable>)drawableRef;
 		id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)queueRef;
 		id<MTLCommandBuffer> cmdBuffer = [queue commandBuffer];
+		[cmdBuffer addCompletedHandler:^(id<MTLCommandBuffer> b) {
+			if (b.status == MTLCommandBufferStatusError) {
+				NSString *s = [NSString stringWithFormat:@"raw: METAL ERROR status=%ld code=%ld notPermitted=%d: %@", (long)b.status, (long)b.error.code, b.error.code == MTLCommandBufferErrorNotPermitted, b.error.localizedDescription];
+				gio_diagTrace((char *)[s UTF8String]);
+			}
+		}];
 		[cmdBuffer commit];
 		[cmdBuffer waitUntilScheduled];
 		[drawable present];

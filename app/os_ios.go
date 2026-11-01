@@ -162,10 +162,16 @@ func gio_onDraw(h C.uintptr_t) {
 }
 
 func (w *window) draw(sync bool) {
-	if inBackground {
-		return
-	}
 	params := C.viewDrawParams(w.view)
+	if inBackground {
+		if !DiagDrawInBackground.Load() {
+			diagTrace("draw dropped, in the background: size=%dx%d sync=%v", int(params.width+.5), int(params.height+.5), sync)
+			return
+		}
+		diagTrace("raw: DRAW IN THE BACKGROUND: size=%dx%d sync=%v", int(params.width+.5), int(params.height+.5), sync)
+	} else {
+		diagTrace("draw: size=%dx%d sync=%v", int(params.width+.5), int(params.height+.5), sync)
+	}
 	if params.width == 0 || params.height == 0 {
 		return
 	}
@@ -196,6 +202,7 @@ func (w *window) draw(sync bool) {
 
 //export onEnterBackground
 func onEnterBackground() {
+	diagTrace("raw: onEnterBackground, inBackground=%v", inBackground)
 	if inBackground {
 		return
 	}
@@ -205,6 +212,7 @@ func onEnterBackground() {
 
 //export onEnterForeground
 func onEnterForeground() {
+	diagTrace("raw: onEnterForeground, inBackground=%v", inBackground)
 	if !inBackground {
 		return
 	}

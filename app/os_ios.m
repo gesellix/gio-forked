@@ -17,6 +17,7 @@ __attribute__ ((visibility ("hidden"))) Class gio_layerClass(void);
 CGFloat _keyboardHeight;
 
 - (void)loadView {
+	gio_diagTrace((char *)"raw: loadView, observers follow");
 	gio_runMain();
 
 	CGRect zeroFrame = CGRectMake(0, 0, 0, 0);
@@ -55,10 +56,12 @@ CGFloat _keyboardHeight;
 }
 
 - (void)applicationWillEnterForeground:(UIApplication *)application {
+	gio_diagTrace((char *)[[NSString stringWithFormat:@"raw: applicationWillEnterForeground controller=%p", self] UTF8String]);
 	onEnterForeground();
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)application {
+	gio_diagTrace((char *)[[NSString stringWithFormat:@"raw: applicationDidEnterBackground controller=%p", self] UTF8String]);
 	onEnterBackground();
 }
 
@@ -75,6 +78,7 @@ CGFloat _keyboardHeight;
 	// Adjust view bounds to make room for the keyboard.
 	frame.size.height -= _keyboardHeight;
 	view.frame = frame;
+	gio_diagTrace((char *)"viewDidLayoutSubviews");
 	gio_onDraw(view.handle);
 }
 
